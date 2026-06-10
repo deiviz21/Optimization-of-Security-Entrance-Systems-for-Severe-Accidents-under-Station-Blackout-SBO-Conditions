@@ -2,7 +2,7 @@ import subprocess
 import os
 import sys
 # ==============================
-# This file will help us to call the MELGEN and MELCOR executables and run them with our INPUT.
+# This script will help us to call the MELGEN and MELCOR executables and run them with our INPUT.
 # ==============================
 
 # ==============================
