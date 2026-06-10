@@ -2,7 +2,7 @@ import numpy as np
 import os
 
 # ==============================
-# This script will help us to read
+# This script will help us to read the results file
 # ==============================
 
 def procesar_archivo(ruta):
