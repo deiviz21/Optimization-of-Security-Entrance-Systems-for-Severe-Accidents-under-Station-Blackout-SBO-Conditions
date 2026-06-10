@@ -1,15 +1,18 @@
 import subprocess
 import os
 import sys
+# ==============================
+# This file will help us to call the MELGEN and MELCOR executables and run them with our INPUT.
+# ==============================
 
 # ==============================
-# RUTAS DE LOS EJECUTABLES
+# EXECUTABLES PATH: Path to the MELCOR and MELGEN executable used to run the simulation with a given 'INPUT' file.
 # ==============================
 melg = r"C:\MELCOR\MELCOR2.2r2025.0.0\bin\license\melgen_r2025.0.0.exe"
 melc = r"C:\MELCOR\MELCOR2.2r2025.0.0\bin\license\melcor_r2025.0.0.exe"
 
 # ==============================
-# ARCHIVO DE ENTRADA
+# INPUT FILE PATH: Path to the 'INPUT' file of MELCOR and MELGEN
 # ==============================
 inp_file = r"C:\TFM DAVID\SBO\CASO BASE copia\Input_SBO_Mit.INP"
  
@@ -18,7 +21,7 @@ working_dir = os.path.dirname(inp_file)
 inp_name = os.path.basename(inp_file)
 
 # ==============================
-# COMPROBACIONES PREVIAS
+# SOME COMPROBATIONS: We will verify that the paths for the executables and the input are correct
 # ==============================
 if not os.path.exists(melg):
     print("ERROR: No se encuentra MELGEN")
@@ -33,7 +36,7 @@ if not os.path.exists(inp_file):
     sys.exit(1)
 
 # ==============================
-# EJECUCIÓN MELGEN
+# MELGEN EXECUTION
 # ==============================
 print("\n==============================")
 print("Ejecutando MELGEN")
@@ -57,7 +60,7 @@ if result_melg.returncode != 0:
 print("✅ MELGEN completado correctamente")
 
 # ==============================
-# EJECUCIÓN MELCOR
+# MELCOR EXECUTION
 # ==============================
 print("\n==============================")
 print("Ejecutando MELCOR")
@@ -79,6 +82,6 @@ if result_melc.returncode != 0:
     sys.exit(1)
 
 # ==============================
-# FIN
+# THE END
 # ==============================
 print("\n🎉 Proceso finalizado correctamente")
