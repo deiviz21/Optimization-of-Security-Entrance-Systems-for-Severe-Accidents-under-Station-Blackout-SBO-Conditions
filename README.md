@@ -6,3 +6,7 @@ The project integrates Latin Hypercube Sampling (LHS), Nelder–Mead Simplex opt
 
 This repository contains only the optimization and analysis modules. To execute the complete workflow, users must provide a valid MELCOR input model and establish the corresponding interface between the simulation code and the optimization framework.
 
+This project is divided into two distinct parts. In the first part, we explore the code to optimize the activation of two safety systems: sprays and fan coolers. In the second part, we take a step further by analyzing how the results might change if we introduce the spray flow rate as a new variable to adjust.
+
+Código tcss + tfc -> activation of two safety systems
+código tcss + tfc + caudal -> activation of two safety systems adding spray flow rate
