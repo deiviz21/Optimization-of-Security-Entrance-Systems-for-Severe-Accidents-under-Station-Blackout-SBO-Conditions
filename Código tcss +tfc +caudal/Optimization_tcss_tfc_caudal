@@ -1,0 +1,390 @@
+import numpy as np
+import sys
+import subprocess
+
+# ==========================================
+# 1. FUNCIÓN DE HIPERCUBO LATINO
+# ==========================================
+def generar_hipercubo_latino(dim, n_particiones, a, b):
+    """Genera muestras de Hipercubo Latino."""
+    permutaciones = np.array([np.random.permutation(n_particiones) for _ in range(dim)]).T
+    posiciones_aleatorias = np.random.random((n_particiones, dim))
+    hipercubo = a + (b - a) * (permutaciones + posiciones_aleatorias) / n_particiones
+    return hipercubo
+
+# ==========================================
+# 2. FUNCIÓN DE NELDER-MEAD (SIMPLEX)
+# ==========================================
+def nelder_mead(x0, variaciones=None, alpha=1.0, gamma=2.0, rho=0.5, sigma=0.5, tol=1e-6, max_iter=1000, vector_global=None):
+    """Implementación del método de Nelder-Mead (Simplex) para 3 variables (tcss, tfc, caudal)."""
+    n = len(x0)
+    
+    # ===== MODIFICACIÓN MÍNIMA: Aceptar variaciones personalizadas =====
+    if variaciones is None:
+        variaciones = np.full(n, 7200.0)  # Mantiene comportamiento original
+    elif len(variaciones) != n:
+        print(f"⚠️ Advertencia: variaciones tiene {len(variaciones)} elementos pero se esperaban {n}. Usando 7200 para todas.")
+        variaciones = np.full(n, 7200.0)
+    # ==================================================================
+    
+    simplex = [np.array(x0)]
+    for i in range(n):
+        point = np.array(x0)
+        point[i] += variaciones[i]
+        simplex.append(point)
+    simplex = np.array(simplex)
+    
+    vector = []  # Lista para acumular resultados del simplex actual
+    
+    # Obtener límites globales para clamp
+    bounds_global = [(float('inf'), float('inf'))] * n  # Por defecto sin límites
+    
+    # ===== FUNCIÓN MODIFICADA: AHORA CON 3 VARIABLES (tcss, tfc, caudal) =====
+    def evaluar_punto(tcss, tfc, caudal):
+        """Ejecuta simulación y devuelve valor objetivo - SIEMPRE GUARDA EN VECTOR GLOBAL"""
+        
+        from mod_txt_tcss_tfc_caudal import reemplazar_valores_txt
+        
+        # Reemplazar valores en el archivo de texto
+        reemplazar_valores_txt(tcss, tfc, caudal)
+        
+        # Corremos el programa de Melgen y Melcor
+        subprocess.run(["python", r"C:\Users\e6211\Programas David\Melg_Melc_tcss_tfc_caudal.py"])
+        
+        # Leer resultados
+        resultado_val = subprocess.run(
+            ["python", r"C:\Users\e6211\Programas David\val_max_txt_tcss_tfc_caudal.py"],
+            capture_output=True,
+            text=True
+        )
+        
+        try:
+            valor = float(resultado_val.stdout.strip())
+            # ===== SIEMPRE GUARDAR EN VECTOR GLOBAL (CON CAUDAL) =====
+            if vector_global is not None:
+                # Guardamos: [tcss, tfc, caudal, valor]
+                vector_global.append([tcss, tfc, caudal, valor])
+            # =========================================================
+            return valor
+        except:
+            print(f"❌ Error al leer valor: {resultado_val.stdout}")
+            return 1e10
+
+    # Evaluar puntos iniciales del simplex
+    for i, punto in enumerate(simplex):
+        tcss = max(0, punto[0])
+        tfc = max(0, punto[1])
+        caudal = max(0, punto[2])  # <--- EXTRAEMOS CAUDAL
+        
+        valor_objetivo = evaluar_punto(tcss, tfc, caudal)
+        vector.append([tcss, tfc, caudal, valor_objetivo])  # <--- GUARDAMOS CON CAUDAL
+        print(f"Punto {i}: tcss={tcss:.2f}, tfc={tfc:.2f}, caudal={caudal:.2f} → Valor={valor_objetivo:.6f}")
+    
+    # Convertir a numpy array
+    vector = np.array(vector)
+    
+    # Bucle principal de Nelder-Mead
+    for iteration in range(max_iter):
+        f_values = vector[:, 3]  # Columna 3 es el valor (0:tcss, 1:tfc, 2:caudal, 3:valor)
+        indices = np.argsort(f_values)
+        puntos = vector[:, :3][indices]  # Tomamos las 3 primeras columnas (tcss, tfc, caudal)
+        f_values = f_values[indices]
+        
+        print("\n" + "="*60)
+        print(f"Iteración {iteration}")
+        print("="*60)
+        print(f"MEJOR   → tcss={puntos[0][0]:.2f}, tfc={puntos[0][1]:.2f}, caudal={puntos[0][2]:.2f} | f = {f_values[0]:.6f}")
+        print(f"MEDIO   → tcss={puntos[1][0]:.2f}, tfc={puntos[1][1]:.2f}, caudal={puntos[1][2]:.2f} | f = {f_values[1]:.6f}")
+        print(f"PEOR    → tcss={puntos[-1][0]:.2f}, tfc={puntos[-1][1]:.2f}, caudal={puntos[-1][2]:.2f} | f = {f_values[-1]:.6f}")
+        print("="*60)
+        
+        x_best = puntos[0]
+        f_best = f_values[0]
+        x_worst = puntos[-1]
+        f_worst = f_values[-1]
+        x_second_worst = puntos[-2]
+        f_second_worst = f_values[-2]
+        
+        centroid = np.mean(puntos[:-1], axis=0)
+        
+        # ===== REFLEXIÓN =====
+        x_reflect = centroid + alpha * (centroid - x_worst)
+        x_reflect = np.maximum(x_reflect, 0)
+        f_reflect = evaluar_punto(x_reflect[0], x_reflect[1], x_reflect[2])
+        
+        if f_reflect < f_best:
+            # ===== EXPANSIÓN =====
+            x_expand = centroid + gamma * (x_reflect - centroid)
+            x_expand = np.maximum(x_expand, 0)
+            f_expand = evaluar_punto(x_expand[0], x_expand[1], x_expand[2])
+            if f_expand < f_reflect:
+                puntos[-1] = x_expand
+                f_values[-1] = f_expand
+            else:
+                puntos[-1] = x_reflect
+                f_values[-1] = f_reflect
+        elif f_reflect < f_second_worst:
+            puntos[-1] = x_reflect
+            f_values[-1] = f_reflect
+        else:
+            # ===== CONTRACCIÓN =====
+            if f_reflect < f_worst:
+                x_contract = centroid + rho * (x_reflect - centroid)
+            else:
+                x_contract = centroid + rho * (x_worst - centroid)
+            x_contract = np.maximum(x_contract, 0)
+            f_contract = evaluar_punto(x_contract[0], x_contract[1], x_contract[2])
+            if f_contract < f_worst:
+                puntos[-1] = x_contract
+                f_values[-1] = f_contract
+            else:
+                # ===== REDUCCIÓN =====
+                for i in range(1, n+1):
+                    puntos[i] = x_best + sigma * (puntos[i] - x_best)
+                    puntos[i] = np.maximum(puntos[i], 0)
+                    f_values[i] = evaluar_punto(puntos[i][0], puntos[i][1], puntos[i][2])
+        
+        # Actualizar vector con los nuevos puntos
+        vector = np.column_stack([puntos, f_values])
+        
+        if np.std(f_values) < tol:
+            print(f"✅ Convergencia alcanzada en iteración {iteration}")
+            break
+    
+    x_opt = puntos[0]
+    f_opt = f_values[0]
+    return x_opt, f_opt, iteration + 1
+
+# ==========================================
+# 3. INTERFAZ PRINCIPAL
+# ==========================================
+print("="*60)
+print("OPTIMIZADOR GLOBAL - HIPERCUBO LATINO + SIMPLEX")
+print("="*60)
+
+# VECTOR GLOBAL PARA ALMACENAR TODOS LOS PUNTOS EVALUADOS
+todos_los_puntos = []
+
+# Número de variables (siempre 3: tcss, tfc, caudal)
+n_variables = 3
+print(f"\n✓ Variables fijas: {n_variables} (tcss, tfc, caudal)")
+
+# Límites de la región
+print("\n📊 Define los límites de búsqueda para cada variable:")
+bounds = []
+nombres_variables = ["TCSS", "TFC", "CAUDAL"]
+for i in range(n_variables):
+    while True:
+        try:
+            print(f"\nVariable {i+1}: {nombres_variables[i]}")
+            min_val = float(input(f"  Límite mínimo: "))
+            max_val = float(input(f"  Límite máximo: "))
+            if min_val >= max_val:
+                print("❌ Error: El mínimo debe ser menor que el máximo.")
+                continue
+            bounds.append((min_val, max_val))
+            break
+        except ValueError:
+            print("❌ Error: Por favor, introduce números válidos.")
+
+# ===== VARIACIONES PARA EL SIMPLEX =====
+print("\n📐 Define las variaciones iniciales para el Simplex:")
+variaciones_usuario = []
+for i in range(n_variables):
+    while True:
+        try:
+            valor_sugerido = (bounds[i][1] - bounds[i][0]) * 0.1
+            print(f"\n{nombres_variables[i]}: rango = [{bounds[i][0]:.2f}, {bounds[i][1]:.2f}]")
+            print(f"  Valor sugerido: {valor_sugerido:.2f}")
+            
+            variacion = float(input(f"  Variación (0 para usar sugerido): "))
+            
+            if variacion == 0:
+                variacion = valor_sugerido
+                print(f"  ✅ Usando sugerido: {variacion:.2f}")
+            
+            if variacion <= 0:
+                print("❌ Error: La variación debe ser positiva.")
+                continue
+            variaciones_usuario.append(variacion)
+            break
+        except ValueError:
+            print("❌ Error: Por favor, introduce un número válido.")
+
+# Cantidad de puntos iniciales
+while True:
+    try:
+        n_puntos = int(input("\n🔢 ¿Cuántos puntos iniciales generar con Hipercubo Latino? (ej. 50, 100): "))
+        if n_puntos <= 0:
+            print("❌ Error: Debe ser un número positivo.")
+            continue
+        break
+    except ValueError:
+        print("❌ Error: Por favor, introduce un número entero.")
+
+# Criterios de convergencia del Simplex
+while True:
+    try:
+        tol = float(input("\n🎯 Tolerancia para la convergencia (tol) (ej. 1e-6): "))
+        if tol <= 0:
+            print("❌ Error: La tolerancia debe ser positiva.")
+            continue
+        break
+    except ValueError:
+        print("❌ Error: Por favor, introduce un número válido.")
+
+# ==========================================
+# 4. GENERAR PUNTOS (HIPERCUBO)
+# ==========================================
+print("\n" + "="*60)
+print("GENERANDO PUNTOS INICIALES CON HIPERCUBO LATINO")
+print("="*60)
+
+dim = n_variables
+n_particiones = n_puntos
+
+# Generar puntos con Hipercubo Latino
+puntos_iniciales = generar_hipercubo_latino(
+    dim=dim, 
+    n_particiones=n_particiones, 
+    a=np.array([max(0, bounds[i][0]) for i in range(dim)]),
+    b=np.array([bounds[i][1] for i in range(dim)])
+)
+
+# Aplicar límites
+for i in range(len(puntos_iniciales)):
+    for j in range(dim):
+        puntos_iniciales[i,j] = np.clip(
+            puntos_iniciales[i,j], 
+            max(0, bounds[j][0]), 
+            bounds[j][1]
+        )
+
+if puntos_iniciales is None:
+    print("❌ Error al generar puntos. Abortando.")
+    sys.exit(1)
+
+print(f"\n✅ Se generaron {len(puntos_iniciales)} puntos iniciales.")
+print(f"✅ Variaciones por variable: {variaciones_usuario}")
+
+# Mostrar primeros puntos generados
+print("\n📋 Puntos generados:")
+print("   tcss    tfc    caudal")
+for i in range(min(5, len(puntos_iniciales))):
+    print(f"   {puntos_iniciales[i][0]:.2f}  {puntos_iniciales[i][1]:.2f}  {puntos_iniciales[i][2]:.2f}")
+
+# ==========================================
+# 5. OPTIMIZACIÓN (SIMPLEX)
+# ==========================================
+print("\n" + "="*60)
+print("INICIANDO BÚSQUEDA SIMPLEX DESDE CADA PUNTO")
+print("="*60)
+
+mejor_minimo_global = None
+mejor_valor_global = float('inf')
+total_puntos = len(puntos_iniciales)
+
+for i, punto in enumerate(puntos_iniciales):
+    try:
+        punto_clamp = np.maximum(punto, 0)
+        print(f"\n{'='*60}")
+        print(f"🔍 PUNTO INICIAL {i+1}/{total_puntos}")
+        print(f"   tcss={punto_clamp[0]:.2f}, tfc={punto_clamp[1]:.2f}, caudal={punto_clamp[2]:.2f}")
+        print(f"{'='*60}")
+        
+        x_opt, f_opt, iters = nelder_mead(
+            punto_clamp, 
+            variaciones=variaciones_usuario,
+            tol=tol, 
+            vector_global=todos_los_puntos
+        )
+        
+        if f_opt < mejor_valor_global:
+            mejor_valor_global = f_opt
+            mejor_minimo_global = x_opt
+            print(f"\n⭐ NUEVO MEJOR GLOBAL ENCONTRADO!")
+            print(f"   tcss={x_opt[0]:.2f}, tfc={x_opt[1]:.2f}, caudal={x_opt[2]:.2f}")
+            print(f"   Valor = {f_opt:.6f}")
+        else:
+            print(f"\nℹ️  Punto {i+1} completado. Valor = {f_opt:.6f}")
+            
+    except Exception as e:
+        print(f"❌ Error en punto {i+1}: {e}")
+
+# ==========================================
+# 6. RESULTADO FINAL
+# ==========================================
+print("\n" + "="*60)
+print("🏆 RESULTADO FINAL")
+print("="*60)
+if mejor_minimo_global is not None:
+    print(f"\n✅ Mínimo Global Encontrado:")
+    print(f"   TCSS  = {mejor_minimo_global[0]:.6f}")
+    print(f"   TFC   = {mejor_minimo_global[1]:.6f}")
+    print(f"   CAUDAL= {mejor_minimo_global[2]:.6f}")
+    print(f"   Valor = {mejor_valor_global:.6f}")
+    print(f"\n📊 Se probaron {total_puntos} puntos iniciales.")
+else:
+    print("❌ No se encontró ningún mínimo válido.")
+
+# ==========================================
+# 7. GUARDAR VECTOR DE TODOS LOS PUNTOS
+# ==========================================
+print("\n" + "="*60)
+print("💾 GUARDANDO VECTOR DE PUNTOS EVALUADOS")
+print("="*60)
+
+todos_los_puntos_array = np.array(todos_los_puntos)
+print(f"✅ Total de puntos evaluados: {len(todos_los_puntos)}")
+print(f"✅ Dimensiones del vector: {todos_los_puntos_array.shape}")
+
+# Guardar como archivo .npy
+np.save("todos_los_puntos_evaluados.npy", todos_los_puntos_array)
+print("✅ Archivo guardado: 'todos_los_puntos_evaluados.npy'")
+
+# Guardar como TXT con formato legible
+with open('todos_los_puntos_completos.txt', 'w') as f:
+    f.write("="*80 + "\n")
+    f.write("TODOS LOS PUNTOS EVALUADOS (INCLUYENDO SIMPLEX)\n")
+    f.write("="*80 + "\n")
+    f.write("  #   |   TCSS   |   TFC    |  CAUDAL  |   VALOR   \n")
+    f.write("-"*80 + "\n")
+    
+    for i, punto in enumerate(todos_los_puntos_array):
+        f.write(f"{i+1:4d} | {punto[0]:8.2f} | {punto[1]:8.2f} | {punto[2]:8.2f} | {punto[3]:10.6f}\n")
+    
+    f.write("-"*80 + "\n")
+    f.write(f"TOTAL DE EVALUACIONES: {len(todos_los_puntos)}\n")
+    
+print("✅ Archivo guardado: 'todos_los_puntos_completos.txt'")
+
+# Mostrar estadísticas básicas
+print("\n📊 Estadísticas de las evaluaciones:")
+print(f"   Valor mínimo: {np.min(todos_los_puntos_array[:, 3]):.6f}")
+print(f"   Valor máximo: {np.max(todos_los_puntos_array[:, 3]):.6f}")
+print(f"   Valor promedio: {np.mean(todos_los_puntos_array[:, 3]):.6f}")
+
+# Mostrar primeros puntos
+print("\n📋 Primeros 10 puntos evaluados (tcss, tfc, caudal, valor):")
+print("   #   |   TCSS   |   TFC    |  CAUDAL  |   VALOR   ")
+print("-"*70)
+for i in range(min(10, len(todos_los_puntos_array))):
+    punto = todos_los_puntos_array[i]
+    print(f"  {i+1:2d} | {punto[0]:8.2f} | {punto[1]:8.2f} | {punto[2]:8.2f} | {punto[3]:10.6f}")
+
+print("\n" + "="*60)
+print("✅ PROCESO COMPLETADO")
+print("="*60)
+
+# ==========================================
+# 8. EJECUTAR VER_PUNTOS.PY
+# ==========================================
+print("\n▶️ Ejecutando ver_puntos.py...")
+try:
+    subprocess.run([sys.executable, 'ver_puntos_tcss_tfc_caudal.py'])
+except Exception as e:
+    print(f"❌ Error al ejecutar ver_puntos.py: {e}")
+
+print("\n" + "="*60)
+print("FIN DEL PROCESO")
+print("="*60)
